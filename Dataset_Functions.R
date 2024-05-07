@@ -1,80 +1,60 @@
+#----------------------------Importing Libraries--------------------------------#
 library(dplyr)
 library(anytime)
 library(lubridate)
 library(tidyr)
 
+#------------------------------Loading data-------------------------------------#
+stocks_df <- read.csv("stock_data.csv")
 
-#---------------------------------------Loading Data----------------------------------------#
-#Loading data
-stock_data <- read.csv("stock_data.csv")
-stock_data
-
-head(stock_data)
-
-#Count the number of missing values in each column
-missing_values_count <- colSums(is.na(stock_data))
-print(missing_values_count)
-
-str(stock_data)
-
-#------------------------------------Preprocessing---------------------------------------#
+#-------------------------------Preprocessing-----------------------------------#
 #Convert 'Date' column to datetime format
-stock_data$Date <- as.POSIXct(stock_data$Date, tz = "UTC")
-print(stock_data)
+stocks_df$Date <- as.POSIXct(stocks_df$Date, tz = "UTC")
 
-#Convert 'Date' column to POSIXct and remove timezone information
-stock_data$Date <- as.POSIXct(stock_data$Date)  # Assuming 'Date' is in a format that can be directly converted to POSIXct
-print(stock_data)
-#------------------------------------------------------------------------------------------#
-print(colnames(stock_data))
-#---------Only include data from the last 5 years---------#
+#-------------------Only include data from the last 5 years---------------------#
 # Extract the stock data from 2019 to 2023
-stock_data <- stock_data[which(year(stock_data$Date) >= 2019 & year(stock_data$Date) <= 2023), ]
+stocks_df <- stocks_df[which(year(stocks_df$Date) >= 2019 & year(stocks_df$Date) <= 2023), ]
 
 # Extract year from the Date column
-stock_data$Year <- year(stock_data$Date)
-stock_data
-#---------Calculating annual returns per stock per year---------#
-library(dplyr)
-
+stocks_df$Year <- year(stocks_df$Date)
+#----------------Calculating annual returns per stock per year------------------#
 # Group by 'Company' and 'Year' and get the first and last close prices
-first_close <- stock_data %>% 
-  group_by(Company, Year) %>% 
-  summarize(First_Close = first(Close))
-
-last_close <- stock_data %>% 
-  group_by(Company, Year) %>% 
-  summarize(Last_Close = last(Close))
-
-# Calculate the returns per year
-returns <- left_join(first_close, last_close, by = c("Company", "Year")) %>%
-  mutate(Returns = (Last_Close - First_Close) / First_Close)
-
-# Keep only 'Company', 'Year', and 'Annual_Return' columns
-stock_data <- returns %>%
-  select(Company, Year, Returns)
-
-# Rename the calculated returns column to 'Annual_Return'
-names(stock_data)[names(stock_data) == "Returns"] <- "Annual_Return"
-
-# Display the result
-print(stock_data)
-#################################################################################Me
-
+first_close <- stocks_df %>% group_by(Company, Year) %>% summarise(First_Close = first(Close))
+last_close <- stocks_df %>% group_by(Company, Year) %>% summarise(Last_Close = last(Close))
 
 # Calculate the returns per year
 returns <- merge(last_close, first_close, by = c("Company", "Year"))
 returns$Annual_Return <- (returns$Last_Close - returns$First_Close) / returns$First_Close
-# Normalize returns
+# Normalise returns
 returns$Annual_Return <- scale(returns$Annual_Return)
-
+#-------------------Keeping the necessary columns ------------------------------#
 # Keep only 'Company', 'Year', and 'Annual_Return' columns
 stocks_df <- returns[c("Company", "Year", "Annual_Return")]
+#-----------------------------Unique Stocks-------------------------------------#
+#Unique stocks in the Company column
+unique_stocks <- unique(stocks_df$Company)
+unique_stocks_num <- length(unique_stocks)
+print(unique_stocks_num)
 
-# Display the result
-print(stocks_df)
+# Count the number of unique years each company appears in
+company_years_count <- stocks_df %>%
+  group_by(Company) %>%
+  summarize(Num_Years = n_distinct(Year))
 
-#---------Select 5 random stocks---------#
+# Filter the dataframe to include only companies present in all the years
+companies_present_all_years <- company_years_count %>%
+  filter(Num_Years == n_distinct(stocks_df$Year)) %>%
+  pull(Company)
+
+# Create a dataframe containing only the companies present in all the years
+stocks_df <- stocks_df %>%
+  filter(Company %in% companies_present_all_years)
+
+#Unique stocks in the Company column
+unique_stocks <- unique(stocks_df$Company)
+unique_stocks_num <- length(unique_stocks)
+print(unique_stocks_num)
+#-------------------------Select 5 random stocks-----------------------------#
 select_random_stocks <- function(data, num_stocks_to_select, seed=NULL) {
   if (!is.null(seed)) {
     set.seed(seed)
@@ -94,8 +74,8 @@ print(stocks_df)
 
 unique_companies <- unique(stocks_df$Company)
 print(unique_companies)
-
-#---------Data Splitting---------#
+stocks_df
+#------------------------------Data Splitting---------------------------------#
 # Splitting the data into training and testing sets based on the 'Year' column
 train <- stocks_df %>% filter(Year %in% c(2019, 2020, 2021))
 test <- stocks_df %>% filter(Year %in% c(2022, 2023))
@@ -103,6 +83,15 @@ test <- stocks_df %>% filter(Year %in% c(2022, 2023))
 # Printing the first few rows of the training and testing sets
 print(train)
 print(test)
+
+#-------------------------EDA on Train Data------------------------------------#
+ggplot(train, aes(x = Year, y = Annual_Return, fill = Company)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Annual Returns by Company",
+       x = "Year",
+       y = "Annual Return",
+       fill = "Company") +
+  theme_minimal()
 
 #---------Avg Return for each stock---------#
 calculate_average_annual_return <- function(data) {
@@ -117,7 +106,7 @@ calculate_average_annual_return <- function(data) {
 
 # Calculate average annual return
 train_avg_data <- calculate_average_annual_return(train)
-
+train_avg_data
 # Displaying the unique instances
 cat("\nAverage Annual Return for each Stock:\n")
 print(train_avg_data)
@@ -134,7 +123,6 @@ stock_wide <- train %>%
 for (Company in colnames(stock_wide)) {
   stock_wide[, Company] <- stock_wide[, Company] - train_avg_data[train_avg_data$Company == Company, "Mean_Annual_Return"]
 }
-
 print(stock_wide)
 #---------Covariance matrix---------#
 stock_wide <- stock_wide %>%
@@ -177,14 +165,10 @@ portfolio_fitness <- function(weights) {
   # Calculate constraint value
   constr <- constraint(weights)
   
-  # Penalty for violating constraints
-  #penalty <- 100 * constr
-  
-  # Combine Sharpe Ratio and penalty
   # Use negative Sharpe Ratio to maximize since optimization algorithms typically minimize
   return (-sharpe_ratio)
 }
-############################################################
+#-------------------------------------------GA----------------------------------#
 library(GA)
 library("mcga")
 
@@ -223,8 +207,8 @@ runGA <- function(noRuns = 30, problem = "feature"){
     fitness = featureFitness              #fitness function defined in feature-selection.R
   }
   else if (problem == "Portfolio"){
-    maxGenerations <<- 200
-    popSize = 100
+    maxGenerations <<- 500
+    popSize = 50
     pcrossover = 0.8
     pmutation = 0.2
     type = "real-valued"
@@ -238,8 +222,6 @@ runGA <- function(noRuns = 30, problem = "feature"){
     cat("invalid problem specified. Exiting ... \n")
     return()
   }
-  
-  
   #Set up what stats you wish to note.    
   statnames = c("best", "mean", "median")
   thisRunResults <<- matrix(nrow=maxGenerations, ncol = length(statnames)) #stats of a single run
@@ -286,7 +268,6 @@ getBestFitness<-function(){
 getBestSolution<-function(){
   return(bestSolution)
 }
-
 
 #results_sp<- runGA(noRuns = 30, problem = "Portfolio")
 #p1 <- parseData(results_sp, 2, 30)
